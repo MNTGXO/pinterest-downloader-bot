@@ -9,12 +9,26 @@ const PINTEREST_URL_REGEX = /https?:\/\/(?:www\.)?(?:[\w-]+\.)?(?:pinterest\.(?:
 
 module.exports = async (req, res) => {
     if (req.method === 'GET' || req.method === 'HEAD') {
+        const query = getRequestQuery(req);
+
+        if (query.setWebhook === '1' || query.setWebhook === 'true') {
+            const webhookResult = await setTelegramWebhook(req);
+            return res.status(webhookResult.ok ? 200 : 500).json(webhookResult);
+        }
+
+        if (query.webhookInfo === '1' || query.webhookInfo === 'true') {
+            const webhookInfo = await getTelegramWebhookInfo();
+            return res.status(webhookInfo.ok ? 200 : 500).json(webhookInfo);
+        }
+
         return res.status(200).json({
             ok: true,
             message: 'Pinterest Downloader Bot webhook is running. Telegram updates must be sent with POST.',
             support: SUPPORT_GROUP_URL,
             source: SOURCE_CODE_URL,
-            botTokenConfigured: Boolean(BOT_TOKEN)
+            botTokenConfigured: Boolean(BOT_TOKEN),
+            webhookSetup: getWebhookSetupUrl(req),
+            webhookInfo: getWebhookInfoUrl(req)
         });
     }
 
@@ -90,6 +104,93 @@ module.exports = async (req, res) => {
         return res.status(200).send('OK');
     }
 };
+
+
+function getRequestQuery(req) {
+    if (req.query && typeof req.query === 'object') return req.query;
+
+    const host = req.headers && req.headers.host ? req.headers.host : 'localhost';
+    const url = new URL(req.url || '/', `https://${host}`);
+    return Object.fromEntries(url.searchParams.entries());
+}
+
+function getRequestOrigin(req) {
+    const headers = req.headers || {};
+    const protocol = headers['x-forwarded-proto'] || 'https';
+    const host = headers['x-forwarded-host'] || headers.host;
+
+    if (!host) return null;
+    return `${protocol}://${host}`;
+}
+
+function getWebhookUrl(req) {
+    const origin = getRequestOrigin(req);
+    return origin ? `${origin}/api/webhook` : null;
+}
+
+function getWebhookSetupUrl(req) {
+    const origin = getRequestOrigin(req);
+    return origin ? `${origin}/api/webhook?setWebhook=1` : null;
+}
+
+function getWebhookInfoUrl(req) {
+    const origin = getRequestOrigin(req);
+    return origin ? `${origin}/api/webhook?webhookInfo=1` : null;
+}
+
+async function setTelegramWebhook(req) {
+    if (!TELEGRAM_API) {
+        return {
+            ok: false,
+            error: 'BOT_TOKEN is not configured in Vercel.'
+        };
+    }
+
+    const webhookUrl = getWebhookUrl(req);
+    if (!webhookUrl) {
+        return {
+            ok: false,
+            error: 'Could not determine this deployment host.'
+        };
+    }
+
+    const response = await fetch(`${TELEGRAM_API}/setWebhook`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            url: webhookUrl,
+            allowed_updates: ['message', 'edited_message', 'channel_post', 'edited_channel_post'],
+            drop_pending_updates: false
+        })
+    });
+    const data = await response.json().catch(() => ({}));
+
+    return {
+        ok: response.ok && data.ok === true,
+        webhookUrl,
+        telegram: data,
+        nextStep: response.ok && data.ok === true
+            ? 'Send /start to the bot again in Telegram.'
+            : 'Check the Telegram error and verify BOT_TOKEN belongs to this bot.'
+    };
+}
+
+async function getTelegramWebhookInfo() {
+    if (!TELEGRAM_API) {
+        return {
+            ok: false,
+            error: 'BOT_TOKEN is not configured in Vercel.'
+        };
+    }
+
+    const response = await fetch(`${TELEGRAM_API}/getWebhookInfo`);
+    const data = await response.json().catch(() => ({}));
+
+    return {
+        ok: response.ok && data.ok === true,
+        telegram: data
+    };
+}
 
 function parseRequestBody(body) {
     if (!body) return {};
