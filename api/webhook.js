@@ -289,38 +289,90 @@ async function resolveShortUrl(shortUrl) {
 
 async function extractMediaFromKlickPin(canonicalUrl) {
     try {
+        const pageResponse = await fetch('https://klickpin.com/', {
+            method: 'GET',
+            headers: getKlickPinHeaders()
+        });
+
+        const pageHtml = pageResponse.ok ? await pageResponse.text() : '';
+        const csrfToken = extractCsrfToken(pageHtml);
+        const cookie = getCookieHeader(pageResponse);
+        const form = new URLSearchParams({ url: canonicalUrl });
+        if (csrfToken) form.set('csrf_token', csrfToken);
+
         const response = await fetch('https://klickpin.com/download', {
             method: 'POST',
             headers: {
+                ...getKlickPinHeaders(),
                 'Content-Type': 'application/x-www-form-urlencoded',
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
                 'Origin': 'https://klickpin.com',
-                'Referer': 'https://klickpin.com/'
+                'Referer': 'https://klickpin.com/',
+                ...(cookie ? { Cookie: cookie } : {})
             },
-            body: `url=${encodeURIComponent(canonicalUrl)}`
+            body: form.toString()
         });
 
         if (!response.ok) return null;
         const html = await response.text();
+        const media = parseKlickPinDownload(html);
 
-        const downloadUrlMatch = html.match(/data-download-url="([^"]+)"/) ||
-            html.match(/href="([^"]+)"[^>]*(?:id="dlMP4"|id="dlMP3"|download)/i) ||
-            html.match(/(?:https?:)?\/\/[^"'\s<>]+\.(?:mp4|jpg|jpeg|png|gif|webp)(?:\?[^"'\s<>]*)?/i);
-        const titleMatch = html.match(/<p class="card-text"[^>]*>[\s\S]*?<strong>([\s\S]*?)<\/strong>/i) ||
-            html.match(/<title>([\s\S]*?)<\/title>/i);
+        if (!media.downloadUrl) {
+            console.error('KlickPin did not return a downloadable media URL. CSRF token present:', Boolean(csrfToken));
+            return null;
+        }
 
-        if (!downloadUrlMatch) return null;
-
-        const downloadUrl = normalizeUrl(downloadUrlMatch[1] || downloadUrlMatch[0]);
-        const title = cleanHtml(titleMatch ? titleMatch[1].trim() : 'Pinterest Media');
-        const isVideo = /\.mp4(?:\?|$)/i.test(downloadUrl) || /id="dlMP4"/i.test(html);
-
-        return { downloadUrl, title, isVideo };
+        return media;
     } catch (err) {
         console.error('KlickPin parsing execution error:', err);
         return null;
     }
+}
+
+function getKlickPinHeaders() {
+    return {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+    };
+}
+
+function extractCsrfToken(html) {
+    const match = html.match(/<input[^>]+name=["']csrf_token["'][^>]+value=["']([^"']+)["']/i) ||
+        html.match(/<input[^>]+value=["']([^"']+)["'][^>]+name=["']csrf_token["']/i);
+    return match ? match[1] : null;
+}
+
+function getCookieHeader(response) {
+    if (!response || !response.headers || typeof response.headers.raw !== 'function') return null;
+
+    const cookies = response.headers.raw()['set-cookie'];
+    if (!cookies || cookies.length === 0) return null;
+
+    return cookies.map((cookie) => cookie.split(';')[0]).join('; ');
+}
+
+function parseKlickPinDownload(html) {
+    const primaryButtonMatch = html.match(/<a[^>]+data-download-primary=["']1["'][^>]*>/i);
+    const primaryButton = primaryButtonMatch ? primaryButtonMatch[0] : '';
+    const primaryDataUrlMatch = primaryButton.match(/data-download-url=["']([^"']+)["']/i);
+    const primaryHrefMatch = primaryButton.match(/href=["']([^"']+)["']/i);
+
+    const downloadUrlMatch = primaryDataUrlMatch ||
+        html.match(/data-download-url=["']([^"']+)["']/i) ||
+        primaryHrefMatch ||
+        html.match(/<a[^>]+id=["']dlMP3["'][^>]+href=["']([^"']+)["']/i) ||
+        html.match(/<a[^>]+href=["']([^"']+)["'][^>]+id=["']dlMP3["']/i) ||
+        html.match(/(?:https?:)?\/\/[^"'\s<>]+\.(?:mp4|jpg|jpeg|png|gif|webp)(?:\?[^"'\s<>]*)?/i);
+
+    const titleMatch = primaryButton.match(/data-download-filename=["']([^"']+)["']/i) ||
+        primaryButton.match(/title=["']([^"']+)["']/i) ||
+        html.match(/<p class=["']card-text["'][^>]*>[\s\S]*?<strong>([\s\S]*?)<\/strong>/i) ||
+        html.match(/<title>([\s\S]*?)<\/title>/i);
+
+    const downloadUrl = downloadUrlMatch ? normalizeUrl(downloadUrlMatch[1] || downloadUrlMatch[0]) : null;
+    const title = cleanHtml(titleMatch ? titleMatch[1].trim() : 'Pinterest Media');
+    const isVideo = Boolean(downloadUrl && /\.(?:mp4|mov|m4v|webm)(?:\?|$)/i.test(downloadUrl));
+
+    return { downloadUrl, title, isVideo };
 }
 
 function normalizeUrl(url) {
