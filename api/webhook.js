@@ -13,7 +13,8 @@ module.exports = async (req, res) => {
             ok: true,
             message: 'Pinterest Downloader Bot webhook is running. Telegram updates must be sent with POST.',
             support: SUPPORT_GROUP_URL,
-            source: SOURCE_CODE_URL
+            source: SOURCE_CODE_URL,
+            botTokenConfigured: Boolean(BOT_TOKEN)
         });
     }
 
@@ -44,7 +45,7 @@ module.exports = async (req, res) => {
         }
 
         if (isCommand(text, '/start') || isCommand(text, '/help')) {
-            await sendTextMessage(chatId, buildHelpMessage());
+            await sendTextMessage(chatId, buildHelpMessage(message.chat.type));
             return res.status(200).send('OK');
         }
 
@@ -111,7 +112,11 @@ function isCommand(text, command) {
     return text === command || text.startsWith(`${command}@`) || text.startsWith(`${command} `);
 }
 
-function buildHelpMessage() {
+function buildHelpMessage(chatType = 'private') {
+    const setupHint = chatType === 'private'
+        ? 'If I do not respond in Telegram, make sure your Vercel BOT_TOKEN env var is set and your Telegram webhook URL points to this deployment.'
+        : 'If I do not respond in this chat, make sure I am added to the group and can read messages.';
+
     return [
         '👋 Send me any Pinterest link (pin.it or pinterest.com), and I will extract the direct media file for you.',
         '',
@@ -121,7 +126,9 @@ function buildHelpMessage() {
         'Commands:',
         '/help - Show this message',
         '/support - Get the support group link',
-        '/source - Get the source code link'
+        '/source - Get the source code link',
+        '',
+        setupHint
     ].join('\n');
 }
 
