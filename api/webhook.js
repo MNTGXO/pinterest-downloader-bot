@@ -258,7 +258,6 @@ function buildHelpMessage(chatType = 'private') {
         '/support - Get the support group link',
         '/source - Get the source code link',
         '',
-        setupHint
     ].join('\n');
 }
 
