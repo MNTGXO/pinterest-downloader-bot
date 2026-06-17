@@ -5,6 +5,7 @@ const TELEGRAM_API = BOT_TOKEN ? `https://api.telegram.org/bot${BOT_TOKEN}` : nu
 const KLICKPIN_WORKER = 'https://resolve-cc1770c86b02.vasinvictory3.workers.dev/';
 const SUPPORT_GROUP_URL = 'https://t.me/mnbots_support';
 const SOURCE_CODE_URL = 'https://github.com/MNTGXO/pinterest-downloader-bot';
+const VERCEL_PRODUCTION_URL = process.env.VERCEL_PROJECT_PRODUCTION_URL;
 const PINTEREST_URL_REGEX = /https?:\/\/(?:www\.)?(?:[\w-]+\.)?(?:pinterest\.(?:com|co\.uk|de|fr|it|es|nl|se|ch|co\.in|br|au|at|cl|jp|ru|ie|ca|mx|nz|pt|ph)\/[^\s]+|pin\.it\/[A-Za-z0-9\-_/?=&%.]+)/i;
 
 module.exports = async (req, res) => {
@@ -28,7 +29,10 @@ module.exports = async (req, res) => {
             source: SOURCE_CODE_URL,
             botTokenConfigured: Boolean(BOT_TOKEN),
             webhookSetup: getWebhookSetupUrl(req),
-            webhookInfo: getWebhookInfoUrl(req)
+            productionWebhookSetup: getWebhookSetupUrl(req, 'production'),
+            currentDeploymentWebhookSetup: getWebhookSetupUrl(req, 'current'),
+            webhookInfo: getWebhookInfoUrl(req),
+            note: 'If Telegram webhookInfo shows 401 Unauthorized, your Vercel deployment is protected. Use the productionWebhookSetup URL after deploying to an unprotected Production deployment, or disable Vercel Deployment Protection.'
         });
     }
 
@@ -123,14 +127,30 @@ function getRequestOrigin(req) {
     return `${protocol}://${host}`;
 }
 
-function getWebhookUrl(req) {
-    const origin = getRequestOrigin(req);
+function normalizeOrigin(origin) {
+    if (!origin) return null;
+    return origin.startsWith('http://') || origin.startsWith('https://')
+        ? origin.replace(/\/$/, '')
+        : `https://${origin.replace(/\/$/, '')}`;
+}
+
+function getPreferredWebhookOrigin(req, target = 'production') {
+    if (target === 'current') return getRequestOrigin(req);
+
+    return normalizeOrigin(VERCEL_PRODUCTION_URL) || getRequestOrigin(req);
+}
+
+function getWebhookUrl(req, target = 'production') {
+    const origin = getPreferredWebhookOrigin(req, target);
     return origin ? `${origin}/api/webhook` : null;
 }
 
-function getWebhookSetupUrl(req) {
-    const origin = getRequestOrigin(req);
-    return origin ? `${origin}/api/webhook?setWebhook=1` : null;
+function getWebhookSetupUrl(req, target = 'production') {
+    const origin = getPreferredWebhookOrigin(req, target);
+    if (!origin) return null;
+
+    const targetQuery = target === 'current' ? '&target=current' : '';
+    return `${origin}/api/webhook?setWebhook=1${targetQuery}`;
 }
 
 function getWebhookInfoUrl(req) {
@@ -139,6 +159,8 @@ function getWebhookInfoUrl(req) {
 }
 
 async function setTelegramWebhook(req) {
+    const query = getRequestQuery(req);
+    const target = query.target === 'current' ? 'current' : 'production';
     if (!TELEGRAM_API) {
         return {
             ok: false,
@@ -146,7 +168,7 @@ async function setTelegramWebhook(req) {
         };
     }
 
-    const webhookUrl = getWebhookUrl(req);
+    const webhookUrl = getWebhookUrl(req, target);
     if (!webhookUrl) {
         return {
             ok: false,
@@ -169,8 +191,9 @@ async function setTelegramWebhook(req) {
         ok: response.ok && data.ok === true,
         webhookUrl,
         telegram: data,
+        target,
         nextStep: response.ok && data.ok === true
-            ? 'Send /start to the bot again in Telegram.'
+            ? 'Send /start to the bot again in Telegram. If webhookInfo later shows 401 Unauthorized, deploy to an unprotected Production deployment or disable Vercel Deployment Protection.'
             : 'Check the Telegram error and verify BOT_TOKEN belongs to this bot.'
     };
 }
@@ -186,9 +209,15 @@ async function getTelegramWebhookInfo() {
     const response = await fetch(`${TELEGRAM_API}/getWebhookInfo`);
     const data = await response.json().catch(() => ({}));
 
+    const lastError = data.result && data.result.last_error_message;
+    const deploymentProtectionHint = lastError && lastError.includes('401 Unauthorized')
+        ? 'Telegram is reaching Vercel but Vercel is rejecting it with 401. This is usually Vercel Deployment Protection on a Preview deployment. Deploy Production with protection disabled, then open /api/webhook?setWebhook=1 again.'
+        : null;
+
     return {
         ok: response.ok && data.ok === true,
-        telegram: data
+        telegram: data,
+        deploymentProtectionHint
     };
 }
 
