@@ -258,6 +258,7 @@ function buildHelpMessage(chatType = 'private') {
         '/support - Get the support group link',
         '/source - Get the source code link',
         '',
+        setupHint
     ].join('\n');
 }
 
@@ -350,20 +351,20 @@ function getCookieHeader(response) {
 }
 
 function parseKlickPinDownload(html) {
-    const primaryButtonMatch = html.match(/<a[^>]+data-download-primary=["']1["'][^>]*>/i);
-    const primaryButton = primaryButtonMatch ? primaryButtonMatch[0] : '';
-    const primaryDataUrlMatch = primaryButton.match(/data-download-url=["']([^"']+)["']/i);
-    const primaryHrefMatch = primaryButton.match(/href=["']([^"']+)["']/i);
+    const primaryAnchorMatch = html.match(/<a\b(?=[^>]*data-download-primary=["']1["'])[^>]*>[\s\S]*?<\/a>/i);
+    const imageAnchorMatch = html.match(/<td[^>]+class=["'][^"']*no-mobile[^"']*["'][^>]*>[\s\S]*?<a\b[^>]*>[\s\S]*?Download The Image[\s\S]*?<\/a>[\s\S]*?<\/td>/i);
+    const preferredHtml = primaryAnchorMatch ? primaryAnchorMatch[0] : (imageAnchorMatch ? imageAnchorMatch[0] : html);
 
-    const downloadUrlMatch = primaryDataUrlMatch ||
+    const downloadUrlMatch = preferredHtml.match(/data-download-url=["']([^"']+)["']/i) ||
+        preferredHtml.match(/downloadFile\(\s*(?:&quot;|["'])(.*?)(?:&quot;|["'])/i) ||
+        preferredHtml.match(/href=["']([^"']+)["']/i) ||
         html.match(/data-download-url=["']([^"']+)["']/i) ||
-        primaryHrefMatch ||
         html.match(/<a[^>]+id=["']dlMP3["'][^>]+href=["']([^"']+)["']/i) ||
         html.match(/<a[^>]+href=["']([^"']+)["'][^>]+id=["']dlMP3["']/i) ||
         html.match(/(?:https?:)?\/\/[^"'\s<>]+\.(?:mp4|jpg|jpeg|png|gif|webp)(?:\?[^"'\s<>]*)?/i);
 
-    const titleMatch = primaryButton.match(/data-download-filename=["']([^"']+)["']/i) ||
-        primaryButton.match(/title=["']([^"']+)["']/i) ||
+    const titleMatch = preferredHtml.match(/data-download-filename=["']([^"']+)["']/i) ||
+        preferredHtml.match(/title=["']([^"']+)["']/i) ||
         html.match(/<p class=["']card-text["'][^>]*>[\s\S]*?<strong>([\s\S]*?)<\/strong>/i) ||
         html.match(/<title>([\s\S]*?)<\/title>/i);
 
@@ -376,7 +377,10 @@ function parseKlickPinDownload(html) {
 
 function normalizeUrl(url) {
     if (url.startsWith('//')) return `https:${url}`;
-    return url.replace(/&amp;/g, '&');
+    return url
+        .replace(/&amp;/g, '&')
+        .replace(/&quot;/g, '"')
+        .replace(/&#039;/g, "'");
 }
 
 function cleanHtml(value) {
