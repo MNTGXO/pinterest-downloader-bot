@@ -272,6 +272,9 @@ function isShortPinterestUrl(url) {
 }
 
 async function resolveShortUrl(shortUrl) {
+    const directUrl = await resolveShortUrlWithRedirect(shortUrl);
+    if (directUrl) return directUrl;
+
     try {
         const response = await fetch(`${KLICKPIN_WORKER}?url=${encodeURIComponent(shortUrl)}`, {
             method: 'GET',
@@ -280,9 +283,35 @@ async function resolveShortUrl(shortUrl) {
         });
         if (!response.ok) return null;
         const data = await response.json();
-        return data.finalUrl || data.url || data.resolvedUrl || null;
+        const resolvedUrl = data.finalUrl || data.url || data.resolvedUrl || null;
+        return resolvedUrl && !isShortPinterestUrl(resolvedUrl) ? resolvedUrl : null;
     } catch (err) {
         console.error('Short URL resolution crash:', err);
+        return null;
+    }
+}
+
+async function resolveShortUrlWithRedirect(shortUrl) {
+    try {
+        const response = await fetch(shortUrl, {
+            method: 'GET',
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+            },
+            redirect: 'follow'
+        });
+
+        if (response.url && !isShortPinterestUrl(response.url)) return response.url;
+
+        const html = response.ok ? await response.text() : '';
+        const canonicalMatch = html.match(/<link[^>]+rel=["']canonical["'][^>]+href=["']([^"']+)["']/i) ||
+            html.match(/<meta[^>]+property=["']og:url["'][^>]+content=["']([^"']+)["']/i);
+        const canonicalUrl = canonicalMatch ? canonicalMatch[1] : null;
+
+        return canonicalUrl && !isShortPinterestUrl(canonicalUrl) ? canonicalUrl : null;
+    } catch (err) {
+        console.error('Direct short URL resolution failed:', err);
         return null;
     }
 }
@@ -361,7 +390,7 @@ function parseKlickPinDownload(html) {
         html.match(/data-download-url=["']([^"']+)["']/i) ||
         html.match(/<a[^>]+id=["']dlMP3["'][^>]+href=["']([^"']+)["']/i) ||
         html.match(/<a[^>]+href=["']([^"']+)["'][^>]+id=["']dlMP3["']/i) ||
-        html.match(/(?:https?:)?\/\/[^"'\s<>]+\.(?:mp4|jpg|jpeg|png|gif|webp)(?:\?[^"'\s<>]*)?/i);
+        html.match(/(?:https?:)?\/\/i\.pinimg\.com\/[^"'\s<>]+\.(?:mp4|jpg|jpeg|png|gif|webp)(?:\?[^"'\s<>]*)?/i);
 
     const titleMatch = preferredHtml.match(/data-download-filename=["']([^"']+)["']/i) ||
         preferredHtml.match(/title=["']([^"']+)["']/i) ||
