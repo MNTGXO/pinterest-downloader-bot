@@ -385,12 +385,7 @@ function parseKlickPinDownload(html) {
     const preferredHtml = primaryAnchorMatch ? primaryAnchorMatch[0] : (imageAnchorMatch ? imageAnchorMatch[0] : html);
 
     const downloadUrlMatch = preferredHtml.match(/data-download-url=["']([^"']+)["']/i) ||
-        preferredHtml.match(/downloadFile\(\s*(?:&quot;|["'])(.*?)(?:&quot;|["'])/i) ||
-        preferredHtml.match(/href=["']([^"']+)["']/i) ||
-        html.match(/data-download-url=["']([^"']+)["']/i) ||
-        html.match(/<a[^>]+id=["']dlMP3["'][^>]+href=["']([^"']+)["']/i) ||
-        html.match(/<a[^>]+href=["']([^"']+)["'][^>]+id=["']dlMP3["']/i) ||
-        html.match(/(?:https?:)?\/\/i\.pinimg\.com\/[^"'\s<>]+\.(?:mp4|jpg|jpeg|png|gif|webp)(?:\?[^"'\s<>]*)?/i);
+        html.match(/data-download-url=["']([^"']+)["']/i);
 
     const titleMatch = preferredHtml.match(/data-download-filename=["']([^"']+)["']/i) ||
         preferredHtml.match(/title=["']([^"']+)["']/i) ||
@@ -442,19 +437,125 @@ async function sendTextMessage(chatId, text) {
 async function sendMediaToTelegram(chatId, { downloadUrl, title, isVideo }) {
     const endpoint = isVideo ? 'sendVideo' : 'sendPhoto';
     const payloadKey = isVideo ? 'video' : 'photo';
+    const caption = `${title}
 
-    const body = { chat_id: chatId, caption: `${title}\n\nSupport: ${SUPPORT_GROUP_URL}\nSource: ${SOURCE_CODE_URL}` };
-    body[payloadKey] = downloadUrl;
+Support: ${SUPPORT_GROUP_URL}
+Source: ${SOURCE_CODE_URL}`;
 
-    const response = await fetch(`${TELEGRAM_API}/${endpoint}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body)
-    });
+    const mediaFile = await downloadMediaFile(downloadUrl, title);
+    const response = mediaFile
+        ? await sendDownloadedMedia(chatId, endpoint, payloadKey, caption, mediaFile)
+        : await sendMediaByUrl(chatId, endpoint, payloadKey, caption, downloadUrl);
 
     if (!response.ok) {
         const errLog = await response.text();
         console.error('Telegram media upload rejection:', errLog);
-        await sendTextMessage(chatId, `🔗 Link extracted, but Telegram file upload failed. Download here directly:\n\n${downloadUrl}\n\nSupport: ${SUPPORT_GROUP_URL}\nSource: ${SOURCE_CODE_URL}`);
+        await sendTextMessage(chatId, `🔗 Link extracted, but Telegram file upload failed. Download here directly:
+
+${downloadUrl}
+
+Support: ${SUPPORT_GROUP_URL}
+Source: ${SOURCE_CODE_URL}`);
     }
+}
+
+async function downloadMediaFile(downloadUrl, title) {
+    try {
+        const response = await fetch(downloadUrl, {
+            method: 'GET',
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,video/*,*/*;q=0.8',
+                'Referer': 'https://www.pinterest.com/'
+            }
+        });
+
+        if (!response.ok) return null;
+
+        const contentLength = Number(response.headers.get('content-length') || 0);
+        if (contentLength > 45 * 1024 * 1024) return null;
+
+        const buffer = await response.buffer();
+        if (!buffer.length || buffer.length > 45 * 1024 * 1024) return null;
+
+        return {
+            buffer,
+            filename: getSafeFilename(title, downloadUrl),
+            contentType: response.headers.get('content-type') || getContentTypeFromUrl(downloadUrl)
+        };
+    } catch (err) {
+        console.error('Failed to download extracted media URL:', err);
+        return null;
+    }
+}
+
+async function sendDownloadedMedia(chatId, endpoint, payloadKey, caption, mediaFile) {
+    const boundary = `----PinterestBot${Date.now().toString(16)}`;
+    const body = buildMultipartBody(boundary, {
+        chat_id: String(chatId),
+        caption
+    }, {
+        fieldName: payloadKey,
+        filename: mediaFile.filename,
+        contentType: mediaFile.contentType,
+        buffer: mediaFile.buffer
+    });
+
+    return fetch(`${TELEGRAM_API}/${endpoint}`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': `multipart/form-data; boundary=${boundary}`,
+            'Content-Length': String(body.length)
+        },
+        body
+    });
+}
+
+async function sendMediaByUrl(chatId, endpoint, payloadKey, caption, downloadUrl) {
+    const body = { chat_id: chatId, caption };
+    body[payloadKey] = downloadUrl;
+
+    return fetch(`${TELEGRAM_API}/${endpoint}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+    });
+}
+
+function buildMultipartBody(boundary, fields, file) {
+    const chunks = [];
+
+    for (const [name, value] of Object.entries(fields)) {
+        chunks.push(Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="${name}"\r\n\r\n${value}\r\n`));
+    }
+
+    chunks.push(Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="${file.fieldName}"; filename="${escapeMultipartValue(file.filename)}"\r\nContent-Type: ${file.contentType}\r\n\r\n`));
+    chunks.push(file.buffer);
+    chunks.push(Buffer.from(`\r\n--${boundary}--\r\n`));
+
+    return Buffer.concat(chunks);
+}
+
+function escapeMultipartValue(value) {
+    return String(value).replace(/["\r\n]/g, '_');
+}
+
+function getSafeFilename(title, downloadUrl) {
+    const extensionMatch = downloadUrl.match(/\.(jpg|jpeg|png|gif|webp|mp4|mov|m4v|webm)(?:\?|$)/i);
+    const extension = extensionMatch ? extensionMatch[1].toLowerCase() : 'jpg';
+    const baseName = cleanHtml(title)
+        .replace(/\.[a-z0-9]{2,5}$/i, '')
+        .replace(/[^a-z0-9-_]+/gi, '_')
+        .replace(/^_+|_+$/g, '')
+        .slice(0, 80) || 'pinterest_media';
+
+    return `${baseName}.${extension}`;
+}
+
+function getContentTypeFromUrl(downloadUrl) {
+    if (/\.png(?:\?|$)/i.test(downloadUrl)) return 'image/png';
+    if (/\.gif(?:\?|$)/i.test(downloadUrl)) return 'image/gif';
+    if (/\.webp(?:\?|$)/i.test(downloadUrl)) return 'image/webp';
+    if (/\.(?:mp4|mov|m4v|webm)(?:\?|$)/i.test(downloadUrl)) return 'video/mp4';
+    return 'image/jpeg';
 }
