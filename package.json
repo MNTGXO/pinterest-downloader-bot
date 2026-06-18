@@ -1,9 +1,10 @@
 {
   "name": "pinterest-downloader-bot",
   "version": "1.0.0",
-  "description": "Telegram bot to download Pinterest media using KlickPin architecture",
+  "description": "Telegram bot to download Pinterest media using btch-downloader",
   "main": "api/webhook.js",
   "dependencies": {
+    "btch-downloader": "latest",
     "node-fetch": "^2.7.0"
   }
 }
