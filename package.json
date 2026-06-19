@@ -1,10 +1,21 @@
 {
   "name": "pinterest-downloader-bot",
-  "version": "1.0.0",
-  "description": "Telegram bot to download Pinterest media using btch-downloader",
+  "version": "2.0.0",
+  "description": "Telegram bot that downloads Pinterest images and videos — Vercel serverless",
   "main": "api/webhook.js",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "dev":  "vercel dev",
+    "test": "echo \"No tests yet\" && exit 0",
+    "lint": "node --check api/webhook.js api/index.js lib/pinterest.js lib/telegram.js lib/utils.js"
+  },
   "dependencies": {
     "btch-downloader": "latest",
     "node-fetch": "^2.7.0"
+  },
+  "devDependencies": {
+    "vercel": "^34.0.0"
   }
 }
