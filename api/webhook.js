@@ -70,7 +70,6 @@ function helpMessage(chatType = 'private') {
         `💬 Support: ${SUPPORT_GROUP}`,
         `💻 Source:  ${SOURCE_CODE}`,
         '',
-        hint,
     ].join('\n');
 }
 
